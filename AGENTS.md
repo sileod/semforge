@@ -15,7 +15,7 @@ bash scripts/reproduce_audits.sh quick             # end-to-end audits at small 
 
 ## Where things are
 
-- `semforge/api.py`: the public API (`generate`, `analyze`, `audit_premises`, `Problem`). Keep it small and stable;
+- `semforge/api.py`: the public API (`generate`, `analyze`, `summarize`, `audit_premises`, `Problem`). Keep it small and stable;
   it wraps the machinery below.
 - `semforge/construct/signature.py`: the DSL (sorts, symbols, rule schemas, semantics, English templates).
 - `semforge/construct/packs/<logic>.py`: one module per logic, registered in `packs/__init__.py`.

@@ -64,3 +64,30 @@ def test_neutral_certificate_lists_background_of_withheld_premises():
     # the withheld premise brings a number absent from the visible problem; its facts must be in the certificate
     p = sf.generate("arithmetic", mandatory_steps=1, label="neutral", seed=1)
     assert p.verify() == []
+
+
+def test_analyze_families_and_summarize():
+    # two routes to c, each through a disjunctive step at a different place: no step is mandatory,
+    # but every proof applies disjunctive syllogism, so the operator is needed
+    fam = {"disjunction": {"disjunctive_syllogism", "constructive_dilemma"}}
+    two = [("or", "p", "q"), ("not", "p"), ("->", "q", "c"), ("or", "r", "s"), ("not", "r"), ("->", "s", "c")]
+    x = sf.analyze("propositional", two, "c", families=fam)
+    assert x["proofs"] == 2 and x["mandatory_steps"] == 0 and x["mandatory_rules"] == {}
+    assert x["rules_in_every_proof"]["disjunctive_syllogism"] == 1 and x["families_in_every_proof"] == {"disjunction": True}
+    y = sf.analyze("propositional", ["a", ("->", "a", "b")], "b", families=fam)
+    assert y["mandatory_rules"] == {"modus_ponens": 1} and y["families_in_every_proof"] == {"disjunction": False}
+    s = sf.summarize([x, y, sf.analyze("propositional", ["a"], "z")], labels=["entailment", "contradiction", "neutral"])
+    assert s["derivable"] == 0.667 and s["family_in_every_proof"] == {"disjunction": 0.5}
+    assert s["rule_in_every_proof"]["modus_ponens"] == 1.0 and s["label_disagreement"] == 0.333
+
+
+def test_generate_require_rules():
+    modal = {"necessity_elimination", "necessity_refutation", "impossibility_elimination", "possibility_introduction"}
+    assert modal <= set(sf.rules("modal"))
+    ps = sf.generate("modal", mandatory_steps=3, n=6, seed=1, require_rules=modal, label="entailment")
+    for p in ps:
+        assert set(p.mandatory_rules) & modal and sum(p.mandatory_rules.values()) == 3 and p.verify() == []
+        a = sf.analyze("modal", list(p.instance.premises), p.instance.hypothesis, families={"modal": modal})
+        assert a["families_in_every_proof"] == {"modal": True}
+    with pytest.raises(ValueError):
+        sf.generate("modal", require_rules={"no_such_rule"})

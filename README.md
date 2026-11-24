@@ -34,6 +34,14 @@ Label: entailment
 Every proof of the hypothesis must make both of those steps: none can be skipped by another route. That is
 what `mandatory_steps` guarantees, relative to the logic's inference rules.
 
+To make sure problems exercise particular rules, pass `require_rules`: every problem then has a
+mandatory step of one of them, so no proof avoids it (`sf.rules("modal")` lists a logic's rules):
+
+```python
+modal = {"necessity_elimination", "necessity_refutation", "impossibility_elimination", "possibility_introduction"}
+p = sf.generate("modal", mandatory_steps=3, require_rules=modal)   # needs modal reasoning, certified
+```
+
 A dataset is the same call with `n`. Leave `label` out to mix entailment, contradiction and neutral:
 
 ```python
@@ -102,6 +110,18 @@ sf.analyze("propositional", premises, "f")
 # {'derivable': 'entailment', 'proofs': 42, 'mandatory_steps': 0, 'depth': 3, ...}
 ```
 
+To check an advertised operator, name its rules: `families={"disjunction": {"disjunctive_syllogism",
+"constructive_dilemma"}}` adds whether every proof needs one of them, even when no single step is
+mandatory. Over a dataset, `sf.summarize` aggregates the per-problem results (and, given the dataset's
+labels, how often they disagree with the derived label):
+
+```python
+results = [sf.analyze("propositional", p, h, families=fams) for p, h in problems]
+sf.summarize(results, labels=gold)
+# {'derivable': ..., 'mandatory_steps': ..., 'no_mandatory_step': ..., 'rule_in_every_proof': {...},
+#  'family_in_every_proof': {'disjunction': 0.64}, 'label_disagreement': ...}
+```
+
 `benchmarks/` holds the full audits of ProofWriter, FLD×2, ZebraLogic, PlanBench, FOLIO, ProverQA,
 LogicGraph and a state-tracking dataset; `bash scripts/reproduce_audits.sh quick` reruns them at small
 sizes.
@@ -139,7 +159,7 @@ logic, and certifies every output in full.
   [docs/reproduce.md](docs/reproduce.md).
 
 ```
-semforge/api.py         generate, analyze, audit_premises
+semforge/api.py         generate, analyze, summarize, audit_premises, rules
 semforge/construct/     logics (packs/), calculus and analysis, construction (ProofPlant), shortcut atlas
 semforge/certcheck.py   independent certificate checker
 semforge/audit.py       premise-level audits of datasets
@@ -153,7 +173,7 @@ Development: `pip install -e '.[test]' && python -m pytest -q tests` (a few minu
 ## Citation
 
 semforge accompanies *Certify What You Plant: Shortcut-Free Proof Depth in Logical Reasoning Data*
-(arXiv link to come). Version 0.1.0 is a research release: `generate`, `analyze`, `audit_premises` and the
+(arXiv link to come). Version 0.1.0 is a research release: `generate`, `analyze`, `summarize`, `audit_premises` and the
 certificate format are stable, internals may change.
 
 ```bibtex

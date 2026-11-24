@@ -12,6 +12,8 @@ the label is decided by the logic's solver. Attempts that fail are retried a bou
 """
 from __future__ import annotations
 
+from collections import Counter
+
 import random
 from dataclasses import dataclass, field
 from typing import Optional
@@ -48,8 +50,8 @@ class Problem:
 
     @property
     def mandatory_rules(self) -> dict:
-        """Mandatory steps counted by inference rule."""
-        return dict(sorted(self.instance.analysis.required_rules.items()))
+        """Mandatory steps counted by inference rule (as in sf.analyze)."""
+        return dict(sorted(Counter(s[1] for s in self.instance.analysis.mandatory_steps).items()))
 
     def verify(self) -> list:
         """Re-check the certificate with the independent checker; [] means every claim holds."""
@@ -68,11 +70,14 @@ def _synth(logic: str) -> Synthesizer:
     return Synthesizer(get_pack(logic), strict=True, learn=False)
 
 
-def _one(synth, logic, rng, mandatory_steps, label, distractors) -> Optional[Problem]:
+def _one(synth, logic, rng, mandatory_steps, label, distractors, require=None) -> Optional[Problem]:
     pack = synth.pack
     lab = label or rng.choice(LABELS)
-    plan = synth.sample_plan(rng, mandatory_steps)
-    if len(plan) != mandatory_steps:
+    for _ in range(200 if require else 1):  # plans are cheap: steer them toward a required rule
+        plan = synth.sample_plan(rng, mandatory_steps)
+        if not require or require & set(plan):
+            break
+    if len(plan) != mandatory_steps or (require and not require & set(plan)):
         return None
     target = Target(label=lab, rules=plan, max_depth=max(6, mandatory_steps // 3 + 4),
                     distractors=Distractors(irrelevant=distractors, near_miss=distractors and rng.randint(0, 1)))
@@ -82,6 +87,8 @@ def _one(synth, logic, rng, mandatory_steps, label, distractors) -> Optional[Pro
             return None
         a = inst.analysis
         if len(a.mandatory_steps) != mandatory_steps:
+            return None
+        if require and not require & {s[1] for s in a.mandatory_steps}:  # certified, not just planned
             return None
         premises, hypothesis = pack.render(inst.premises, inst.hypothesis, rng)
         cert = export_certificate(pack, inst)
@@ -96,12 +103,15 @@ def _one(synth, logic, rng, mandatory_steps, label, distractors) -> Optional[Pro
 
 
 def generate(logic: str = "propositional", mandatory_steps: int = 3, label: Optional[str] = None,
-             n: Optional[int] = None, seed: int = 0, distractors: int = 1, max_attempts: int = 50):
+             n: Optional[int] = None, seed: int = 0, distractors: int = 1, max_attempts: int = 50,
+             require_rules: Optional[set] = None):
     """Certified problem(s) of a logic with exactly `mandatory_steps` mandatory rule applications.
 
     logic: one of semforge.LOGICS. label: entailment, contradiction, neutral, or None for a random one
     per problem. n: None returns one Problem, an integer returns a list of n. distractors: irrelevant
-    derivations added per problem (0 for none). Deterministic for a given seed and code version; raises
+    derivations added per problem (0 for none). require_rules: a set of rule names (see
+    semforge.rules(logic)); every problem then has a mandatory step of one of them, so every proof
+    applies it, e.g. the modal rules for problems that need modal reasoning. Deterministic for a given seed and code version; raises
     GenerationError when `max_attempts` attempts per problem all fail (an unplaceable request)."""
     if logic not in LOGICS:
         raise KeyError(f"unknown logic {logic!r}; known: {', '.join(LOGICS)}")
@@ -109,37 +119,94 @@ def generate(logic: str = "propositional", mandatory_steps: int = 3, label: Opti
         raise ValueError(f"label must be one of {LABELS} or None")
     if mandatory_steps < 1:
         raise ValueError("mandatory_steps must be at least 1")
+    require = set(require_rules) if require_rules else None
+    if require and require - set(rules(logic)):
+        raise ValueError(f"unknown rules for {logic}: {sorted(require - set(rules(logic)))}")
     synth, rng, out = _synth(logic), random.Random(seed), []
     for _ in range(1 if n is None else n):
         for _ in range(max_attempts):
-            p = _one(synth, logic, rng, mandatory_steps, label, distractors)
+            p = _one(synth, logic, rng, mandatory_steps, label, distractors, require)
             if p is not None:
                 out.append(p)
                 break
         else:
             raise GenerationError(f"no {logic} problem with {mandatory_steps} mandatory steps"
-                                  f"{' and label ' + label if label else ''} in {max_attempts} attempts")
+                                  f"{' and label ' + label if label else ''}"
+                                  f"{' using ' + '/'.join(sorted(require)) if require else ''} in {max_attempts} attempts")
     return out[0] if n is None else out
 
 
-def analyze(logic: str, premises: list, hypothesis) -> dict:
+def rules(logic: str) -> list:
+    """Names of a logic's inference rules (its calculus), for require_rules and families."""
+    return sorted(get_pack(logic).calculus.rules)
+
+
+def analyze(logic: str, premises: list, hypothesis, families: Optional[dict] = None) -> dict:
     """Proof-level audit of one problem written in a logic's formulas (relative to that logic's calculus).
 
     premises and hypothesis are formulas in the logic's syntax, e.g. for propositional logic
     ["a", ("->", "a", "b")] and "b". Returns, for the hypothesis (entailment) or its negation
-    (contradiction), whichever the calculus derives: the number of minimal proofs, the mandatory steps
-    (rule applications every proof makes), the shallowest proof's depth, mandatory steps by rule and the
-    premises every proof uses. A step found optional here stays optional under any richer calculus."""
-    from .construct.calculus import Universe
+    (contradiction), whichever the calculus derives:
+
+      proofs                 number of minimal proofs (a lower bound when exact is False)
+      mandatory_steps        rule applications every proof makes; mandatory_rules: the same, by rule
+      depth                  levels of the shallowest proof
+      rules_in_every_proof   rules every proof applies, with the least number of times (a rule can be
+                             needed by every proof at different places, so this can exceed mandatory_rules)
+      rule_share             for each rule, the share of minimal proofs that apply it
+      families_in_every_proof  with families={"name": {rule, ...}}: whether every proof applies some rule
+                             of the family, e.g. {"disjunction": {"disjunctive_syllogism",
+                             "constructive_dilemma"}}; this is how an advertised operator is checked
+      mandatory_premises     premises every proof uses
+
+    A step or rule found optional here stays optional under any richer calculus. sf.summarize
+    aggregates these over a dataset."""
+    from .construct.calculus import Universe, rule_counts
     from .construct.calculus import analyze as _analyze
     pack = get_pack(logic)
     for label, goal in (("entailment", hypothesis), ("contradiction", pack.negate(hypothesis))):
         a = _analyze(pack.calculus, list(premises), goal, Universe([*premises, goal], pack.negate, pack.closed))
         if a.derivable:
-            return {"derivable": label, "proofs": a.n_proofs, "mandatory_steps": len(a.mandatory_steps),
-                    "depth": a.depth, "mandatory_rules": dict(sorted(a.required_rules.items())),
-                    "mandatory_premises": len(a.mandatory_premises), "premises": len(premises), "exact": a.exact}
+            uses = [set(rule_counts(p)) for p in a.proofs]
+            out = {"derivable": label, "proofs": a.n_proofs, "mandatory_steps": len(a.mandatory_steps),
+                   "depth": a.depth, "mandatory_rules": dict(sorted(Counter(s[1] for s in a.mandatory_steps).items())),
+                   "rules_in_every_proof": dict(sorted(a.required_rules.items())),
+                   "rule_share": {r: round(sum(r in u for u in uses) / len(uses), 3)
+                                  for r in sorted(set().union(*uses))},
+                   "mandatory_premises": len(a.mandatory_premises), "premises": len(premises), "exact": a.exact}
+            if families:
+                out["families_in_every_proof"] = {f: all(u & set(rs) for u in uses) for f, rs in families.items()}
+            return out
     return {"derivable": None, "premises": len(premises)}
+
+
+def summarize(analyses: list, labels: Optional[list] = None) -> dict:
+    """Dataset-level audit from per-problem sf.analyze results (and, optionally, the dataset's labels).
+
+    Returns the share of problems the calculus derives, means of proofs, mandatory steps and depth over
+    derivable problems, the share with no mandatory step, and for each rule (and family, if analyze was
+    given families) the share of derivable problems where every proof applies it: an advertised operator
+    at 0% is never needed. With labels ("entailment"/"contradiction"/anything else for neutral), also the
+    share of problems where the derived label disagrees with the dataset's."""
+    der = [a for a in analyses if a.get("derivable")]
+    out = {"problems": len(analyses), "derivable": round(len(der) / len(analyses), 3) if analyses else None}
+    if der:
+        mean = lambda k: round(sum(a[k] for a in der) / len(der), 2)  # noqa: E731
+        out.update(proofs=mean("proofs"), mandatory_steps=mean("mandatory_steps"), depth=mean("depth"),
+                   no_mandatory_step=round(sum(a["mandatory_steps"] == 0 for a in der) / len(der), 3),
+                   exact=round(sum(a["exact"] for a in der) / len(der), 3))
+        rules = sorted({r for a in der for r in a["rule_share"]})
+        out["rule_in_every_proof"] = {r: round(sum(r in a["rules_in_every_proof"] for a in der) / len(der), 3)
+                                      for r in rules}
+        fams = sorted({f for a in der for f in a.get("families_in_every_proof", {})})
+        if fams:
+            out["family_in_every_proof"] = {f: round(sum(a["families_in_every_proof"].get(f, False) for a in der)
+                                                     / len(der), 3) for f in fams}
+    if labels is not None:
+        norm = lambda x: x if x in ("entailment", "contradiction") else None  # noqa: E731
+        out["label_disagreement"] = round(sum(norm(l) != a.get("derivable") for a, l in zip(analyses, labels))
+                                          / len(analyses), 3)
+    return out
 
 
 def audit_premises(premises: list, entails, limit: Optional[int] = 64) -> dict:
