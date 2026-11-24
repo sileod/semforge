@@ -1,0 +1,20 @@
+[project]
+name = "semforge"
+version = "0.1.0"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+description = "Certified, target-conditioned construction and auditing of reasoning data"
+requires-python = ">=3.10"
+dependencies = ["z3-solver"]
+
+[project.optional-dependencies]
+bench = ["scikit-learn", "numpy", "sympy"]
+linear = ["sympy"]
+test = ["pytest", "sympy", "numpy"]
+audit = ["datasets"]                  # FLD×2 / ZebraLogic adapters (Hub data)
+transfer = ["datasets", "tasknet"]    # semforge.pipeline.transfer (torch, transformers via tasknet)
+train = ["torch", "transformers", "peft", "datasets", "numpy"]  # experiments/ training runs
+llm = ["litlm"]                       # LLM error analysis through hosted models
+
+[tool.setuptools.packages.find]
+include = ["semforge*"]
