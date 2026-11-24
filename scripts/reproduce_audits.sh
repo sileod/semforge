@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rerun every audit reported in docs/audit.md, from public data, into results/audit/ (or $OUT).
+# Rerun every audit reported in the paper (Section 4, Appendix B), from public data, into results/audit/ (or $OUT).
 #
 #   pip install -e ".[audit]"
 #   bash scripts/reproduce_audits.sh            # all audits (a few hours on one CPU, mostly the proof audits)
@@ -17,7 +17,7 @@ DATA=${DATA:-$HOME/data}
 OUT=${OUT:-results/audit}
 QUICK=${1:-}
 n() { if [ "$QUICK" = quick ]; then echo "$2"; else echo "$1"; fi; }
-mkdir -p "$OUT/planbench"
+mkdir -p "$OUT/planbench" "$DATA"
 
 # --- data ------------------------------------------------------------------------------------------
 PW=$DATA/proofwriter-dataset-V2020.12.3

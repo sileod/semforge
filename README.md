@@ -1,110 +1,160 @@
-# semforge
+# ⚒️ semforge
 
-Logic datasets usually state how hard a problem is by the length of the proof they planted: "this problem
-takes 5 steps". But a planted proof is only one proof. Take the premises *a, a→b, b→c, c→d, d→e, e→f*
-and the goal *f*. Planted as five modus ponens steps, it looks like a 5-step problem. Allow the rule that
-chains two implications, and the same problem has 42 different minimal proofs, none of whose steps is
-needed by all of them. A model can solve it without ever making any particular step.
+**Generate and audit logical reasoning data with certified proof structure.**
 
-semforge measures what a problem actually *requires*, and builds problems where what is planted is what is
-required, with certificates anyone can check.
-
-**What you can do with it**
-
-- **Audit a dataset.** For each problem, find the steps every proof must make (*mandatory steps*), the
-  shortest proof, how many minimal proofs there are, and which premises are indispensable. We have run
-  this on ProofWriter, FLD×2, ZebraLogic, PlanBench, FOLIO, ProverQA, LogicGraph and a state-tracking
-  dataset; some are as deep as they claim, others much less.
-- **Build certified problems.** Ask for a structure (a label, the rules to use, a proof shape, a number of
-  proofs, distractors) and get English problems whose every proof has it. The construction algorithm,
-  *ProofPlant*, avoids shortcuts using an atlas of known shortcut patterns proved once per logic.
-- **Shape training data.** Control the mix of depths, proof shapes and problem types in a training set,
-  instead of inheriting whatever a generator happens to produce.
-- **Declare your own logic.** A logic is a short declaration: symbols, inference rules, a semantics that a
-  solver decides, and English templates. Fifteen come with the library, from propositional, first-order
-  and modal logic to grid puzzles, planning and state tracking. Each rule is proved sound automatically.
-- **Check without trusting us.** Every problem comes with a certificate (its proof, its mandatory steps,
-  the label as an SMT query, and finite countermodels for "neither" answers) that a separate checker,
-  sharing no code with the generator, verifies.
-
-semforge accompanies the paper *Certify What You Plant: Shortcut-Free Proof Depth in Logical Reasoning
-Data* (arXiv link to come). Version 0.1.0 is a research release: the entry points below are stable,
-internals may still change.
-
-## Install
+Ask for problems whose every proof makes exactly *k* inference steps you choose, in one of 15 logics, and
+get English text plus a certificate that an independent checker verifies. Or audit an existing dataset:
+how many of its claimed reasoning steps are actually needed.
 
 ```bash
-pip install -e .                          # core: needs only z3-solver
-pip install -e '.[test,bench,audit]'      # tests, benchmarks, dataset audits (Hugging Face datasets)
-python -m pytest -q tests                 # a few minutes
+pip install git+https://github.com/sileod/semforge     # needs only z3-solver
 ```
 
 ## Quickstart
 
-Validate a logic: every rule proved sound for all instances, how often each rule can be required, and
-whether rendering is ambiguous.
+```python
+import semforge as sf
 
-```bash
-python -m semforge.construct.check propositional
+p = sf.generate("propositional", mandatory_steps=2, label="entailment", seed=3, distractors=0)
+print(p.text)
+print(p.mandatory_rules, p.proofs)
+print(p.verify())        # [] = every claim re-checked by the independent checker
 ```
 
-Construct a certified problem and look at what it requires:
+```
+Tara drinks tea.
+If Emma is happy, then Priya plays chess.
+If Tara drinks tea, then Priya does not play chess.
+Hypothesis: Emma is not happy.
+Label: entailment
+{'modus_ponens': 1, 'modus_tollens': 1} 1
+[]
+```
+
+Every proof of the hypothesis must make both of those steps: none can be skipped by another route. That is
+what `mandatory_steps` guarantees, relative to the logic's inference rules.
+
+A dataset is the same call with `n`. Leave `label` out to mix entailment, contradiction and neutral:
 
 ```python
-import random
-from semforge.domains.constructed import ConstructedDomain
-
-d = ConstructedDomain("monadic", strategy="shape")
-rng = random.Random(0)
-out = []
-while not out:                 # an attempt can fail (unplaceable target); try again
-    out = d.sample(rng, 3)
-inst, label = out[0]
-premises, hypothesis = d.pack.render(inst.premises, inst.hypothesis, rng)
-print(premises, "\n->", hypothesis, f"({label})")
-print(inst.analysis.required_rules)   # mandatory steps by rule
+import json
+problems = sf.generate("monadic", mandatory_steps=4, n=1000, seed=0)
+with open("monadic.jsonl", "w") as f:
+    for i, p in enumerate(problems):
+        f.write(json.dumps({"id": i, **p.to_dict()}) + "\n")
 ```
 
-Audit a dataset: `bash scripts/reproduce_audits.sh quick` downloads the public datasets and reruns every
-audit at small sample sizes; drop `quick` for the paper's sizes.
+Anyone can then re-check every certificate without trusting the generator:
 
-## Layout
-
-```
-semforge/construct/   logics and construction
-  signature.py          sorts, symbols (z3 semantics, English templates), rule DSL, background theory
-  calculus.py           closure and analysis: mandatory steps and premises, topology, minimal proofs
-  build.py, synth.py    backward construction of derivations; target -> certified problem (ProofPlant)
-  atlas.py              shortcut atlas: proved nogoods, lifting, nogood certificates
-  archive.py            archives over certified proof shapes (coverage, target distributions)
-  oracle.py             z3 oracle compiled from a signature
-  check.py              logic validation CLI
-  packs/                one module per logic; the registry is packs/__init__.py
-semforge/certcheck.py   independent certificate checker (shares no code with construct/)
-semforge/audit.py       calculus-free audit: minimal premise sets
-semforge/domains/       dataset adapters (FLD×2, ZebraLogic, FOLIO, constructed data)
-semforge/tasks/         proofs and plans as answers, with independent checking
-benchmarks/             dataset audits and construction benchmarks
-experiments/            training experiments of the paper
-scripts/                reproduction entry points
+```bash
+python -m semforge.certcheck monadic.jsonl       # -> 0 certificate(s) failed
 ```
 
-A new logic is a signature plus rules, about 50 lines; see `semforge/construct/packs/order.py` for a small
-one and `packs/grid.py` for one with background facts. Validate it with
-`python -m semforge.construct.check <name>`.
+## Logics
+
+`sf.LOGICS` lists them. One generated example each, two mandatory steps, no distractors (seed 3):
+
+| logic | example (premises / hypothesis, all entailed) | mandatory steps |
+|---|---|---|
+| `propositional` | Tara drinks tea. If Emma is happy, then Priya plays chess. If Tara drinks tea, then Priya does not play chess. ⟹ *Emma is not happy.* | modus ponens, modus tollens |
+| `monadic` (first-order, one-place predicates) | All felpuses are lorpuses. Either Bea is a rompus or every belpus is a felpus. Bea is not a rompus. ⟹ *All belpuses are lorpuses.* | syllogism, disjunctive syllogism |
+| `modal` (K; also `modal_s4`, `modal_nested`, `modal_hybrid`) | Both in every situation reachable from Quarry, the archive is sealed and in Calder, the bell rings. Dunmore is reachable from Quarry. ⟹ *In Dunmore, the archive is sealed.* | ∧-elimination, □-elimination |
+| `order` | (transitivity, irreflexivity) Both Quin is taller than Mo and Cy is taller than Eli. Ada is shorter than Mo. ⟹ *Quin is taller than Ada.* | ∧-elimination, chain |
+| `arithmetic` | Lea scored 6. Dee's score is 7. Zed scored 1 more than Dee. ⟹ *Zed scored 2 more than Lea.* | chain, difference |
+| `kinship` | (rules for parents, siblings, ancestors...) facts about a family ⟹ *Tom is an aunt or uncle of Xia.* | sibling, uncle |
+| `planning` | a robot, rooms, doors and a sequence of moves ⟹ *At step 4, the robot is in the garden.* | blocked move ×2 |
+| `grid` (zebra puzzles) | five houses, people, colours and clues ⟹ *David is not in the fourth house.* | category, distance |
+| `csp` | Either Alice's house is purple or Mateo's house is white. Mateo and Lena live in houses of different colours. Alice does not live in the purple house. ⟹ *Lena's house is not white.* | disjunctive syllogism, inequality |
+
+Also `monadic_syllogistic` (instantiations and syllogisms only) and `boxes` (state tracking). Most logics
+produce a problem in well under a second; `grid` and `boxes` take seconds to a minute, and `arithmetic`
+goes up to about 5 mandatory steps.
+
+## Audit a dataset
+
+Two levels, with different requirements.
+
+**Premise level: no calculus, any dataset.** Give the premises and an entailment oracle (anything that says
+whether a subset of premises still yields the label, e.g. a z3 call on the dataset's formulas). semforge
+enumerates the minimal premise sets:
+
+```python
+import z3
+a, b, c = z3.Bools("a b c")
+premises = [a, z3.Implies(a, b), z3.Implies(b, c), z3.Implies(a, c), c]
+
+def entails(subset):
+    s = z3.Solver(); s.add(*subset, z3.Not(c))
+    return s.check() == z3.unsat
+
+sf.audit_premises(premises, entails)
+# {'supports': 3, 'min_support': 1, 'indispensable': [], 'never_needed': 0.0, ...}
+```
+
+Three different premise sets justify the label, the smallest has one premise, and no premise is needed by
+all of them.
+
+**Proof level: steps, relative to a logic's rules.** Write the problem in one of the logics' formulas:
+
+```python
+premises = ["a", ("->", "a", "b"), ("->", "b", "c"), ("->", "c", "d"), ("->", "d", "e"), ("->", "e", "f")]
+sf.analyze("propositional", premises, "f")
+# {'derivable': 'entailment', 'proofs': 42, 'mandatory_steps': 0, 'depth': 3, ...}
+```
+
+`benchmarks/` holds the full audits of ProofWriter, FLD×2, ZebraLogic, PlanBench, FOLIO, ProverQA,
+LogicGraph and a state-tracking dataset; `bash scripts/reproduce_audits.sh quick` reruns them at small
+sizes.
+
+## Why semforge?
+
+Logic datasets usually state how hard a problem is by the length of the proof they planted: "this problem
+takes 5 steps". But a planted proof is only one proof. The audit above is a 5-step chain *a, a→b, …, e→f ⊢
+f*: allow the rule that chains two implications, and it has 42 minimal proofs, none of whose steps is
+needed by all of them. A model can solve it without making any particular step. Across published datasets,
+some are as deep as they claim and others much less.
+
+semforge measures what a problem *requires*, and builds problems where what is planted is required. The
+construction algorithm, *ProofPlant*, avoids shortcuts using an atlas of shortcut patterns proved once per
+logic, and certifies every output in full.
 
 ## What the guarantees cover
 
-Labels are exact relative to the logic's solver. Structure is exact relative to the logic's calculus over
-a bounded universe of formulas; calculi are ground and forward (no hypothetical steps). Adding rules can
-only make steps avoidable, never required, so a step found avoidable stays avoidable under any richer
-calculus. Difficulty for models is measured, never certified.
+- **Labels** are exact relative to the logic's solver (z3).
+- **Structure** (mandatory steps, proofs, depth) is exact relative to the logic's calculus over a bounded
+  universe of formulas; calculi are ground and forward (no hypothetical steps). Adding rules can only make
+  steps avoidable, never required, so a step found avoidable stays avoidable under any richer calculus.
+- **Certificates** hold the proof, the mandatory steps and premises, the label as SMT queries and finite
+  countermodels for neutral labels; `semforge/certcheck.py` shares no code with the generator.
+- **Difficulty for models** is measured, never certified.
 
-## Reproducing the paper
+## Going further
 
-See [docs/reproduce.md](docs/reproduce.md).
+- **Finer targets** (proof shapes, several proofs, distractor types, deliberately bypassable steps):
+  `semforge.construct.target.Target` and `semforge.construct.synth.Synthesizer`, which `sf.generate` wraps.
+- **Your own logic**: a signature (symbols with z3 semantics and English templates) plus rules, about 50
+  lines. Start from `semforge/construct/packs/order.py` (small) or `packs/grid.py` (background facts), and
+  validate it with `python -m semforge.construct.check <name>`: every rule is proved sound by z3.
+- **Training data mixtures** and the paper's experiments: `experiments/`, and
+  [docs/reproduce.md](docs/reproduce.md).
+
+```
+semforge/api.py         generate, analyze, audit_premises
+semforge/construct/     logics (packs/), calculus and analysis, construction (ProofPlant), shortcut atlas
+semforge/certcheck.py   independent certificate checker
+semforge/audit.py       premise-level audits of datasets
+semforge/domains/       dataset adapters (FLD×2, ZebraLogic, FOLIO, constructed data)
+benchmarks/             dataset audits and construction benchmarks
+experiments/            training experiments of the paper
+```
+
+Development: `pip install -e '.[test]' && python -m pytest -q tests` (a few minutes).
 
 ## Citation
+
+semforge accompanies *Certify What You Plant: Shortcut-Free Proof Depth in Logical Reasoning Data*
+(arXiv link to come). Version 0.1.0 is a research release: `generate`, `analyze`, `audit_premises` and the
+certificate format are stable, internals may change.
 
 ```bibtex
 @misc{juran2026certify,

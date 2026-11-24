@@ -2,7 +2,7 @@
 
   python -m benchmarks.stress_atlas --pack propositional [--subs 200] [--embedded 2000]
 
-The soundness argument (docs/atlas.md) says every instance of a nogood, in any context, is bypassed.
+The soundness argument (the paper, Appendix A) says every instance of a nogood, in any context, is bypassed.
 Two attacks on it:
 
   substitution  each most general instance of each nogood under adversarial substitutions of its
@@ -14,7 +14,7 @@ Two attacks on it:
                 required.
 
 A counterexample is an instance where every planned application is still mandatory. Substitutions that
-identify constants are reported apart: the theorem covers injective ones (docs/atlas.md). Instances outside
+identify constants are reported apart: the theorem covers injective ones (the paper, Appendix A). Instances outside
 a guarded nogood's guard make no claim and are counted apart.
 """
 from __future__ import annotations

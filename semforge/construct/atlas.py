@@ -369,7 +369,10 @@ def certificate_fields(pack, premises, goal, universe) -> dict:
             "unordered": {h: [list(g) for g in gs] for h, gs in calc.unordered.items()},
             "universe": {"literals": sorted(map(to_json, universe.literals), key=repr), "closed": sorted(universe.closed)},
             "premises": to_json(tuple(premises)), "goal": to_json(goal),
-            "background": to_json(tuple(sorted(calc.background_set.facts(_constants(universe)), key=repr)))}
+            # constants of the premises too: a neutral certificate's premises include the withheld ones, whose
+            # constants (e.g. a number) may appear nowhere in the visible problem's universe
+            "background": to_json(tuple(sorted(calc.background_set.facts(
+                _constants(universe) | {a for f in (*premises, goal) for a in atoms(f)}), key=repr)))}
 
 
 def _constants(universe) -> set:

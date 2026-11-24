@@ -18,7 +18,7 @@ A nogood certificate (`semforge.construct.atlas.nogood_certificates`) instead ho
 instance of a shortcut-atlas fragment: the planned derivation (`planned`), one of its steps (`avoids`)
 and a proof of the same goal that never makes that step. Both derivations are checked, so the planned
 step is shown not mandatory on that instance; the extension to every instance is the atlas theorem
-(docs/atlas.md), not re-checked here.
+(the paper, Appendix A), not re-checked here.
 
 Claims are relative to the rules and universe in the certificate. A labelled certificate states its
 `hypothesis`. An entailment (contradiction) label rests on a proof whose goal is the hypothesis (its
@@ -464,10 +464,11 @@ def check(cert: dict) -> list:
     return Checker(cert).check(cert) + check_countermodels(cert)
 
 
-if __name__ == "__main__":  # python -m semforge.certcheck certificates.jsonl
+if __name__ == "__main__":  # python -m semforge.certcheck certificates.jsonl (a certificate, or a row with one, per line)
     bad = 0
     for line in open(sys.argv[1]):
-        cert = json.loads(line)
+        row = json.loads(line)
+        cert = {"id": row.get("id"), **row["certificate"]} if "certificate" in row else row
         errs = check(cert)
         bad += bool(errs)
         for e in errs:

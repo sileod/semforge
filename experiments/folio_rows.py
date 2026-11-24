@@ -4,7 +4,7 @@ corrected label as gold (True/False/Uncertain -> entailment/contradiction/neutra
 
 FOLIO has no calculus of ours, so there is no certified step count: `mandatory` is None. For E/C rows that
 z3 decides, `mandatory_premises` is the number of premises in every minimal support (the semantic audit's
-measure, docs/audit.md), and `z3_agrees` says whether z3 gives the corrected label from the corrected
+measure, `semforge.audit`), and `z3_agrees` says whether z3 gives the corrected label from the corrected
 formulas.
 
   python -m experiments.folio_rows --out results/llm_mix/data/test_folio.jsonl
