@@ -708,6 +708,10 @@ def test_model_checker_validates_the_model_against_declarations():
     arity = {"sorts": {"S": ["a"]}, "functions": {"c": {"rows": [], "else": "a"},
                                                   "P": {"rows": [["a", "a", True]], "else": True}}}
     assert ModelChecker(arity).check(smt)
+    # malformed queries are reported, never crash or pass: empty terms, bare top-level tokens, ()
+    m = {"sorts": {}, "functions": {}}
+    for q in ["(assert ())", "foo (assert true)", "() (assert true)", "(assert true false)"]:
+        assert ModelChecker(m).check(q), q
     missing = {"sorts": {"S": ["a"]}, "functions": {"P": {"rows": [], "else": True}}}
     assert any("no table for c" in e for e in ModelChecker(missing).check(smt))
 
@@ -910,3 +914,15 @@ def test_certificate_checker_rejects_malformed_claims():
     for bad in (decl + "(assert false", "", ")", decl + "(assert true))"):
         assert ModelChecker(model).check(bad), repr(bad)
     assert ModelChecker(model).check(decl + "(assert (forall ((x S)) (P x)))") == []
+
+
+def test_is_mandatory_ignores_parent_order():
+    from semforge.construct.calculus import Universe, analyze
+    from semforge.construct.packs import get as get_pack
+    pk = get_pack("propositional")
+    prem = ["a", ("->", "a", "b")]
+    a = analyze(pk.calculus, prem, "b", Universe([*prem, "b"], pk.negate, pk.closed))
+    (sid,) = a.mandatory_steps
+    flipped = (sid[0], sid[1], sid[2], tuple(reversed(sid[3])))
+    assert a.is_mandatory(sid) and a.is_mandatory(flipped)
+    assert not a.is_mandatory(("step", "modus_ponens", "c", sid[3]))

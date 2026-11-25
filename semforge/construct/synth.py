@@ -103,7 +103,7 @@ def export_certificate(pack: Pack, inst: "Instance") -> Optional[dict]:
         **certificate_fields(pack, a.premises, a.goal, inst.universe), "label": inst.label,
         "hypothesis": to_json(inst.hypothesis),
         "proof": proof,
-        "mandatory_steps": [n for n, x in enumerate(ids) if x in a.mandatory_steps],
+        "mandatory_steps": [n for n, x in enumerate(ids) if a.is_mandatory(x)],
         "mandatory_premises": to_json(tuple(sorted(a.mandatory_premises, key=repr))),
     }
     if inst.label == "neutral":
@@ -126,7 +126,9 @@ def export_certificate(pack: Pack, inst: "Instance") -> Optional[dict]:
                   "contradiction": ("entailment",)}[inst.label]
         goals = {"entailment": inst.hypothesis, "contradiction": negated}
         cms = [(r, countermodel(sig, inst.premises, goals[r])) for r in refute]
-        cert["countermodels"] = [{"refutes": r, "model": cm["model"]} for r, cm in cms if cm is not None]
+        if any(cm is None for _, cm in cms):
+            return None  # a certificate without the countermodel its label needs is not exported
+        cert["countermodels"] = [{"refutes": r, "model": cm["model"]} for r, cm in cms]
     return cert
 
 
@@ -339,7 +341,7 @@ class Synthesizer:
         the target's requested exposure, as identities and not as kind counts."""
         out = []
         for i, sid in enumerate(plan_ids):
-            if sid not in inst.analysis.mandatory_steps:
+            if not inst.analysis.is_mandatory(sid):
                 witness = inst.analysis.proof_without(sid)
                 if witness:  # always: a non-mandatory application is avoided by some proof
                     steps = [(r, h, tuple(ps)) for _, r, h, ps in witness]
@@ -364,7 +366,7 @@ class Synthesizer:
         if a.depth < target.min_depth:
             return (None, "shallow") if self.strict else (inst, "drift")
         if target.exposed:  # identity-level: exactly k planned applications are bypassable, the rest mandatory
-            n = sum(1 for sid in plan or () if sid not in a.mandatory_steps)
+            n = sum(1 for sid in plan or () if not a.is_mandatory(sid))
             if n != target.exposed:
                 return (None, f"exposed_{n}") if self.strict else (inst, "drift")
         elif not a.requires(want):  # every planned application is a mandatory step (no enumeration)

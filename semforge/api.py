@@ -73,11 +73,12 @@ def _synth(logic: str) -> Synthesizer:
 def _one(synth, logic, rng, mandatory_steps, label, distractors, require=None) -> Optional[Problem]:
     pack = synth.pack
     lab = label or rng.choice(LABELS)
-    for _ in range(200 if require else 1):  # plans are cheap: steer them toward a required rule
+    kinds = lambda plan: set(pack.calculus.kinds(plan))  # noqa: E731  (plans name schemas; steps, families)
+    for _ in range(200 if require else 1):  # plans are cheap: steer them toward a required rule family
         plan = synth.sample_plan(rng, mandatory_steps)
-        if not require or require & set(plan):
+        if not require or require & kinds(plan):
             break
-    if len(plan) != mandatory_steps or (require and not require & set(plan)):
+    if len(plan) != mandatory_steps or (require and not require & kinds(plan)):
         return None
     target = Target(label=lab, rules=plan, max_depth=max(6, mandatory_steps // 3 + 4),
                     distractors=Distractors(irrelevant=distractors, near_miss=distractors and rng.randint(0, 1)))
@@ -110,7 +111,8 @@ def generate(logic: str = "propositional", mandatory_steps: int = 3, label: Opti
     logic: one of semforge.LOGICS. label: entailment, contradiction, neutral, or None for a random one
     per problem. n: None returns one Problem, an integer returns a list of n. distractors: irrelevant
     derivations added per problem (0 for none). require_rules: a set of rule names (see
-    semforge.rules(logic)); every problem then has a mandatory step of one of them, so every proof
+    semforge.rules(logic), which lists rule families: schemas that differ only in argument order share one);
+    every problem then has a mandatory step of one of them, so every proof
     applies it, e.g. the modal rules for problems that need modal reasoning. Deterministic for a given seed and code version; raises
     GenerationError when `max_attempts` attempts per problem all fail (an unplaceable request)."""
     if logic not in LOGICS:
@@ -119,9 +121,13 @@ def generate(logic: str = "propositional", mandatory_steps: int = 3, label: Opti
         raise ValueError(f"label must be one of {LABELS} or None")
     if mandatory_steps < 1:
         raise ValueError("mandatory_steps must be at least 1")
-    require = set(require_rules) if require_rules else None
-    if require and require - set(rules(logic)):
-        raise ValueError(f"unknown rules for {logic}: {sorted(require - set(rules(logic)))}")
+    require = None
+    if require_rules:
+        calc = get_pack(logic).calculus
+        unknown = {r for r in require_rules if r not in calc.rules and r not in calc.families}
+        if unknown:
+            raise ValueError(f"unknown rules for {logic}: {sorted(unknown)}")
+        require = {calc.rules[r].family if r in calc.rules else r for r in require_rules}  # schema -> family
     synth, rng, out = _synth(logic), random.Random(seed), []
     for _ in range(1 if n is None else n):
         for _ in range(max_attempts):
@@ -137,8 +143,29 @@ def generate(logic: str = "propositional", mandatory_steps: int = 3, label: Opti
 
 
 def rules(logic: str) -> list:
-    """Names of a logic's inference rules (its calculus), for require_rules and families."""
-    return sorted(get_pack(logic).calculus.rules)
+    """Names of a logic's inference rules (its calculus), for require_rules and families. These are rule
+    families, the names certificates count steps by: schemas that differ only in argument order or position
+    (e.g. grid's left and left_back) share one."""
+    return get_pack(logic).calculus.families
+
+
+def _family_sets(calc, families: dict) -> dict:
+    """Family names, or schema names mapped to their family; unknown names raise ValueError."""
+    out = {}
+    for f, rs in families.items():
+        unknown = {r for r in rs if r not in calc.rules and r not in calc.families}
+        if unknown:
+            raise ValueError(f"unknown rules in family {f!r}: {sorted(unknown)}")
+        out[f] = {calc.rules[r].family if r in calc.rules else r for r in rs}
+    return out
+
+
+def _needed(pack, premises, goal, fams: set) -> bool:
+    """Exact: does every proof apply a rule of `fams`? (The goal is underivable once they are removed.)"""
+    from .construct.calculus import Calculus, Universe
+    from .construct.calculus import analyze as _analyze
+    calc = Calculus([r for r in pack.calculus.rules.values() if r.family not in fams], signature=pack.signature)
+    return not _analyze(calc, list(premises), goal, Universe([*premises, goal], pack.negate, pack.closed), cap=1).derivable
 
 
 def analyze(logic: str, premises: list, hypothesis, families: Optional[dict] = None) -> dict:
@@ -152,30 +179,50 @@ def analyze(logic: str, premises: list, hypothesis, families: Optional[dict] = N
       mandatory_steps        rule applications every proof makes; mandatory_rules: the same, by rule
       depth                  levels of the shallowest proof
       rules_in_every_proof   rules every proof applies, with the least number of times (a rule can be
-                             needed by every proof at different places, so this can exceed mandatory_rules)
-      rule_share             for each rule, the share of minimal proofs that apply it
+                             needed by every proof at different places, so this can exceed mandatory_rules).
+                             Which rules is exact (tested by removing the rule and re-deriving); the count is
+                             exact when exact is True, else a lower bound
+      rule_share             for each rule, the share of enumerated minimal proofs that apply it
       families_in_every_proof  with families={"name": {rule, ...}}: whether every proof applies some rule
                              of the family, e.g. {"disjunction": {"disjunctive_syllogism",
-                             "constructive_dilemma"}}; this is how an advertised operator is checked
+                             "constructive_dilemma"}}; this is how an advertised operator is checked.
+                             Exact, also when enumeration is capped (the family is removed and the goal
+                             re-derived)
       mandatory_premises     premises every proof uses
+      inconsistent           the calculus derives the negation too (inconsistent premises): the reported
+                             label is then one of two
 
     A step or rule found optional here stays optional under any richer calculus. sf.summarize
     aggregates these over a dataset."""
     from .construct.calculus import Universe, rule_counts
     from .construct.calculus import analyze as _analyze
     pack = get_pack(logic)
+    fam_sets = _family_sets(pack.calculus, families) if families else None
     for label, goal in (("entailment", hypothesis), ("contradiction", pack.negate(hypothesis))):
         a = _analyze(pack.calculus, list(premises), goal, Universe([*premises, goal], pack.negate, pack.closed))
         if a.derivable:
             uses = [set(rule_counts(p)) for p in a.proofs]
+            mandatory = Counter(s[1] for s in a.mandatory_steps)
+            if a.exact:
+                every = dict(a.required_rules)
+            else:  # enumeration capped: a rule in every enumerated proof may still be avoidable
+                every = {r: max(mandatory[r], 1) for r in set.intersection(*uses)
+                         if _needed(pack, premises, goal, {r})}
             out = {"derivable": label, "proofs": a.n_proofs, "mandatory_steps": len(a.mandatory_steps),
-                   "depth": a.depth, "mandatory_rules": dict(sorted(Counter(s[1] for s in a.mandatory_steps).items())),
-                   "rules_in_every_proof": dict(sorted(a.required_rules.items())),
+                   "depth": a.depth, "mandatory_rules": dict(sorted(mandatory.items())),
+                   "rules_in_every_proof": dict(sorted(every.items())),
                    "rule_share": {r: round(sum(r in u for u in uses) / len(uses), 3)
                                   for r in sorted(set().union(*uses))},
                    "mandatory_premises": len(a.mandatory_premises), "premises": len(premises), "exact": a.exact}
-            if families:
-                out["families_in_every_proof"] = {f: all(u & set(rs) for u in uses) for f, rs in families.items()}
+            # premises that derive both the hypothesis and its negation: every label is derivable
+            out["inconsistent"] = label == "entailment" and _analyze(
+                pack.calculus, list(premises), pack.negate(hypothesis),
+                Universe([*premises, pack.negate(hypothesis)], pack.negate, pack.closed), cap=1).derivable
+            if fam_sets:
+                # an enumerated proof avoiding the family settles it; otherwise remove the family and re-derive
+                out["families_in_every_proof"] = {
+                    f: all(u & rs for u in uses) and (a.exact or _needed(pack, premises, goal, rs))
+                    for f, rs in fam_sets.items()}
             return out
     return {"derivable": None, "premises": len(premises)}
 
@@ -186,8 +233,9 @@ def summarize(analyses: list, labels: Optional[list] = None) -> dict:
     Returns the share of problems the calculus derives, means of proofs, mandatory steps and depth over
     derivable problems, the share with no mandatory step, and for each rule (and family, if analyze was
     given families) the share of derivable problems where every proof applies it: an advertised operator
-    at 0% is never needed. With labels ("entailment"/"contradiction"/anything else for neutral), also the
-    share of problems where the derived label disagrees with the dataset's."""
+    at 0% is never needed. With labels ("entailment"/"contradiction"/anything else for neutral; one per analysis), also
+    label_disagreement, the share where the calculus derives a label other than the dataset's, and
+    labelled_but_underivable, the share labelled E or C that the calculus does not derive."""
     der = [a for a in analyses if a.get("derivable")]
     out = {"problems": len(analyses), "derivable": round(len(der) / len(analyses), 3) if analyses else None}
     if der:
@@ -202,10 +250,18 @@ def summarize(analyses: list, labels: Optional[list] = None) -> dict:
         if fams:
             out["family_in_every_proof"] = {f: round(sum(a["families_in_every_proof"].get(f, False) for a in der)
                                                      / len(der), 3) for f in fams}
+        out["inconsistent"] = round(sum(a.get("inconsistent", False) for a in der) / len(der), 3)
     if labels is not None:
+        if len(labels) != len(analyses):
+            raise ValueError(f"{len(labels)} labels for {len(analyses)} analyses")
         norm = lambda x: x if x in ("entailment", "contradiction") else None  # noqa: E731
-        out["label_disagreement"] = round(sum(norm(l) != a.get("derivable") for a, l in zip(analyses, labels))
-                                          / len(analyses), 3)
+        pairs = list(zip(analyses, map(norm, labels)))
+        # contradicted: the calculus derives a label other than the dataset's (a neutral one included);
+        # underivable: the dataset says E or C but the calculus derives nothing (incompleteness or a wrong label)
+        out["label_disagreement"] = round(sum(a.get("derivable") is not None and a["derivable"] != l
+                                              for a, l in pairs) / len(pairs), 3)
+        out["labelled_but_underivable"] = round(sum(a.get("derivable") is None and l is not None
+                                                    for a, l in pairs) / len(pairs), 3)
     return out
 
 
@@ -215,14 +271,20 @@ def audit_premises(premises: list, entails, limit: Optional[int] = 64) -> dict:
     entails(subset) -> bool says whether a subset of the premises still yields the label (e.g. a z3 call
     on the dataset's formulas). Enumerates the minimal premise sets that do (up to `limit`) and returns how
     many there are (> 1: an alternative justification exists), the smallest one's size, the premises in
-    every minimal set (indispensable) and the share of premises in none (never needed)."""
-    from .core.lattice import Oracle, enumerate_lattice
+    every minimal set (indispensable, exact even when the enumeration is capped: each candidate is tested by
+    deleting it) and the share of premises in none (never needed; an upper bound when complete is False)."""
+    from .core.lattice import Oracle, enumerate_lattice, necessary
     items = list(range(len(premises)))
-    sups, _, complete = enumerate_lattice(items, Oracle(lambda s: entails([premises[i] for i in sorted(s)])),
-                                          limit=limit)
+    oracle = Oracle(lambda s: entails([premises[i] for i in sorted(s)]))
+    sups, _, complete = enumerate_lattice(items, oracle, limit=limit)
     if not sups:
         return {"supports": 0, "premises": len(premises), "complete": complete}
-    used, every = set().union(*sups), set.intersection(*map(set, sups))
+    used = set().union(*sups)
+    if complete:
+        every = set.intersection(*map(set, sups))
+    else:  # capped: a premise in every listed set may be avoidable; test each by deleting it
+        every = set(necessary(items, oracle, frozenset(sups[0])))
+    # capped, the share of premises in no listed set is an upper bound on the never-needed share
     return {"supports": len(sups), "complete": complete, "min_support": min(map(len, sups)),
             "indispensable": sorted(every), "never_needed": round(1 - len(used) / len(premises), 3),
             "premises": len(premises)}

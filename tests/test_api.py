@@ -79,6 +79,12 @@ def test_analyze_families_and_summarize():
     s = sf.summarize([x, y, sf.analyze("propositional", ["a"], "z")], labels=["entailment", "contradiction", "neutral"])
     assert s["derivable"] == 0.667 and s["family_in_every_proof"] == {"disjunction": 0.5}
     assert s["rule_in_every_proof"]["modus_ponens"] == 1.0 and s["label_disagreement"] == 0.333
+    assert s["labelled_but_underivable"] == 0.0 and s["inconsistent"] == 0.0
+    u = sf.summarize([sf.analyze("propositional", ["a"], "z")], labels=["entailment"])
+    assert u["label_disagreement"] == 0.0 and u["labelled_but_underivable"] == 1.0
+    assert sf.analyze("propositional", ["a", ("not", "a")], "a")["inconsistent"] is True
+    with pytest.raises(ValueError):
+        sf.summarize([x, y], labels=["entailment"])
 
 
 def test_generate_require_rules():
@@ -91,3 +97,23 @@ def test_generate_require_rules():
         assert a["families_in_every_proof"] == {"modal": True}
     with pytest.raises(ValueError):
         sf.generate("modal", require_rules={"no_such_rule"})
+
+
+def test_rule_families_in_api():
+    # grid's left_back is an argument-order variant of left: listed once, accepted as its family
+    assert "left" in sf.rules("grid") and "left_back" not in sf.rules("grid")
+    p = sf.generate("grid", mandatory_steps=3, seed=0, require_rules={"left_back"}, max_attempts=20)
+    assert "left" in p.mandatory_rules
+    with pytest.raises(ValueError):
+        sf.analyze("propositional", ["a"], "a", families={"x": {"no_such_rule"}})
+
+
+def test_family_necessity_by_removal():
+    from semforge.api import _needed
+    from semforge.construct.packs import get as get_pack
+    pk = get_pack("propositional")
+    prem = [("or", "a", "b"), ("not", "a"), ("->", "c", "b"), "c"]  # b by disjunctive syllogism or by modus ponens
+    assert not _needed(pk, prem, "b", {"disjunctive_syllogism"}) and not _needed(pk, prem, "b", {"modus_ponens"})
+    assert _needed(pk, prem, "b", {"disjunctive_syllogism", "modus_ponens"})
+    x = sf.analyze("propositional", prem, "b", families={"disjunction": {"disjunctive_syllogism"}})
+    assert x["families_in_every_proof"] == {"disjunction": False} and x["rules_in_every_proof"] == {}

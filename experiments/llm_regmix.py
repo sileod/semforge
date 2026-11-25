@@ -299,7 +299,8 @@ def report(args):
     choose between E and C (balanced over the two), how often it answers neutral, and how well its neutral
     score separates neutral rows from the rest (AUC). Means over the seeds found."""
     def auc(pos, neg):
-        rank = np.argsort(np.argsort(np.concatenate([pos, neg]))) + 1
+        from scipy.stats import rankdata
+        rank = rankdata(np.concatenate([pos, neg]))  # average ranks: a tie counts one half
         return (rank[:len(pos)].sum() - len(pos) * (len(pos) + 1) / 2) / (len(pos) * len(neg))
     print(f"{'arm':13s}{'test':13s}{'seeds':>6s}{'macro':>7s}{'E/C':>7s}{'N rate':>8s}{'N AUC':>7s}")
     for arm in args.arms:

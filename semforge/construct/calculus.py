@@ -520,6 +520,14 @@ class Analysis:
             self._mandatory_premises = frozenset(p for p in prem if need & tokens.get(("premise", p), 0))
         return self._mandatory
 
+    def is_mandatory(self, sid) -> bool:
+        """Is this step id (`step_id`) a mandatory step, its parents in any order? A rule matching its
+        premises two ways gives the same application with permuted parents."""
+        keys = getattr(self, "_mandatory_keys", None)
+        if keys is None:
+            keys = self._mandatory_keys = frozenset((x[1], x[2], frozenset(x[3])) for x in self.mandatory_steps)
+        return (sid[1], sid[2], frozenset(sid[3])) in keys
+
     @property
     def mandatory_premises(self) -> frozenset:
         self.mandatory_steps

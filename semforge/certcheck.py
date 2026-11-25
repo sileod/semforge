@@ -364,6 +364,8 @@ class ModelChecker:
             if t.isdigit():
                 return int(t)
             return self.apply(t, ())
+        if not t:
+            raise ValueError("empty expression")
         op, args = t[0], t[1:]
         if isinstance(op, list):
             raise ValueError(f"unsupported term {t!r}")
@@ -418,8 +420,13 @@ class ModelChecker:
             cmds = _sexprs(smt2)
         except ValueError as e:
             return [f"malformed query: {e}"]
-        if not any(isinstance(c, list) and c and c[0] == "assert" for c in cmds):
+        bad = [c for c in cmds if not (isinstance(c, list) and c and isinstance(c[0], str))]
+        if bad:
+            return [f"malformed command {bad[0]!r}"]  # a bare token or () at top level
+        if not any(c[0] == "assert" for c in cmds):
             return ["the query asserts nothing"]
+        if any(c[0] == "assert" and len(c) != 2 for c in cmds):
+            return ["an assert takes exactly one term"]
         errors = self.declarations(cmds)
         if errors:
             return errors
@@ -427,7 +434,7 @@ class ModelChecker:
             try:
                 if not self.ev(cmd[1], {}):
                     errors.append(f"assertion {n} is false in the model")
-            except (ValueError, KeyError, TypeError) as e:
+            except (ValueError, KeyError, TypeError, IndexError) as e:
                 errors.append(f"assertion {n}: {e}")
         return errors
 

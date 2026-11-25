@@ -13,7 +13,7 @@ linear = ["sympy"]
 test = ["pytest", "sympy", "numpy"]
 audit = ["datasets"]                  # FLD×2 / ZebraLogic adapters (Hub data)
 transfer = ["datasets", "tasknet"]    # semforge.pipeline.transfer (torch, transformers via tasknet)
-train = ["torch", "transformers", "peft", "datasets", "numpy"]  # experiments/ training runs
+train = ["torch", "transformers", "peft", "datasets", "numpy", "scipy"]  # experiments/ training runs
 llm = ["litlm"]                       # LLM error analysis through hosted models
 
 [tool.setuptools.packages.find]
