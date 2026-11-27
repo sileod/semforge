@@ -2,6 +2,8 @@
 
 **Generate and audit logical reasoning data with certified proof structure.**
 
+Paper: [Certify What You Plant: Shortcut-Free Proof Depth in Logical Reasoning Data](https://arxiv.org/abs/2611.33303) (arXiv:2611.33303).
+
 Ask for problems whose every proof makes exactly *k* inference steps you choose, in one of 15 logics, and
 get English text plus a certificate that an independent checker verifies. Or audit an existing dataset:
 how many of its claimed reasoning steps are actually needed.
@@ -173,7 +175,7 @@ Development: `pip install -e '.[test]' && python -m pytest -q tests` (a few minu
 ## Citation
 
 semforge accompanies *Certify What You Plant: Shortcut-Free Proof Depth in Logical Reasoning Data*
-(arXiv link to come). Version 0.1.0 is a research release: `generate`, `analyze`, `summarize`, `audit_premises` and the
+([arXiv:2611.33303](https://arxiv.org/abs/2611.33303)). Version 0.1.0 is a research release: `generate`, `analyze`, `summarize`, `audit_premises` and the
 certificate format are stable, internals may change.
 
 ```bibtex
@@ -181,7 +183,10 @@ certificate format are stable, internals may change.
   title  = {Certify What You Plant: Shortcut-Free Proof Depth in Logical Reasoning Data},
   author = {Juran, Baptiste and Kachler, Dimitri and Sileo, Damien},
   year   = {2026},
-  note   = {arXiv preprint, to appear}
+  eprint = {2611.33303},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CL},
+  url    = {https://arxiv.org/abs/2611.33303}
 }
 ```
 
