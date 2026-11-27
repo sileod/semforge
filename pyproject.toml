@@ -3,7 +3,9 @@ name = "semforge"
 version = "0.1.0"
 readme = "README.md"
 license = {text = "Apache-2.0"}
-description = "Certified, target-conditioned construction and auditing of reasoning data"
+description = "A certified sampler of logical reasoning problems: synthetic data with checked proof structure"
+keywords = ["synthetic data", "data generation", "sampler", "logical reasoning", "natural language inference",
+            "proof", "theorem proving", "LLM training", "reasoning benchmark", "dataset audit", "z3"]
 requires-python = ">=3.10"
 dependencies = ["z3-solver"]
 

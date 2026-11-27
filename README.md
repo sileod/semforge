@@ -1,6 +1,7 @@
 # ⚒️ semforge
 
-**Generate and audit logical reasoning data with certified proof structure.**
+**A certified sampler of logical reasoning problems: synthetic training and evaluation data for language
+models, with proof structure checked rather than assumed. Also audits existing reasoning datasets.**
 
 Paper: [Certify What You Plant: Shortcut-Free Proof Depth in Logical Reasoning Data](https://arxiv.org/abs/2611.33303) (arXiv:2611.33303).
 
